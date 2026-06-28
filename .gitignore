@@ -1,0 +1,9 @@
+data/
+station_dataset/
+src/ref_repo/
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+.env
+
