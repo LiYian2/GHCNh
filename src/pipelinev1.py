@@ -75,6 +75,8 @@ OUTPUT_COLUMNS = [
     "report_type",
 ]
 
+COMPACT_OUTPUT_COLUMNS = [col for col in OUTPUT_COLUMNS if col != "time_utc"]
+
 # Documentation page VI, Table 3.
 QC_GOOD_BY_SOURCE = {
     "220": {"1"},
@@ -571,11 +573,41 @@ def append_processing_manifest(results: list[ProcessResult], path: Path) -> None
             writer.writerow(result.__dict__)
 
 
+def write_output_batch(
+    buffer: list[pd.DataFrame],
+    writer: pq.ParquetWriter | None,
+    output: Path,
+    output_columns: list[str],
+    sort_output: bool,
+    compression: str | None,
+) -> tuple[pq.ParquetWriter | None, int]:
+    if not buffer:
+        return writer, 0
+
+    batch = pd.concat(buffer, ignore_index=True)
+    if sort_output:
+        sort_cols = ["report_time_utc", "station_id"]
+        if "time_utc" in batch.columns:
+            sort_cols.insert(0, "time_utc")
+        batch = batch.sort_values(sort_cols, kind="mergesort")
+    batch = batch[output_columns]
+
+    table = pa.Table.from_pandas(batch, preserve_index=False)
+    if writer is None:
+        writer = pq.ParquetWriter(output, table.schema, compression=compression)
+    writer.write_table(table)
+    return writer, len(batch)
+
+
 def process_all(
     station_years: list[StationYear],
     raw_dir: Path,
     output: Path,
     manifest_dir: Path,
+    omit_time_utc: bool,
+    sort_output: bool,
+    write_batch_rows: int,
+    compression: str | None,
 ) -> tuple[int, Counter]:
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
@@ -583,6 +615,10 @@ def process_all(
 
     writer: pq.ParquetWriter | None = None
     total_rows = 0
+    accepted_rows = 0
+    buffered_rows = 0
+    output_buffer: list[pd.DataFrame] = []
+    output_columns = COMPACT_OUTPUT_COLUMNS if omit_time_utc else OUTPUT_COLUMNS
     reject_counts: Counter = Counter()
     process_results: list[ProcessResult] = []
 
@@ -601,20 +637,40 @@ def process_all(
             reject_counts.update(counts)
 
             if chunk is not None and not chunk.empty:
-                table = pa.Table.from_pandas(chunk, preserve_index=False)
-                if writer is None:
-                    writer = pq.ParquetWriter(output, table.schema, compression="snappy")
-                writer.write_table(table)
-                total_rows += len(chunk)
+                accepted_rows += len(chunk)
+                output_buffer.append(chunk)
+                buffered_rows += len(chunk)
+                if buffered_rows >= write_batch_rows:
+                    writer, written_rows = write_output_batch(
+                        output_buffer,
+                        writer,
+                        output,
+                        output_columns,
+                        sort_output,
+                        compression,
+                    )
+                    total_rows += written_rows
+                    output_buffer = []
+                    buffered_rows = 0
 
             if index == len(station_years) or index % 100 == 0:
                 log.info(
                     "Process progress %s/%s output_rows=%s",
                     index,
                     len(station_years),
-                    total_rows,
+                    accepted_rows,
                 )
     finally:
+        if output_buffer:
+            writer, written_rows = write_output_batch(
+                output_buffer,
+                writer,
+                output,
+                output_columns,
+                sort_output,
+                compression,
+            )
+            total_rows += written_rows
         if writer is not None:
             writer.close()
 
@@ -654,24 +710,28 @@ def inspect_sample(
             print(df[col].map(normalize_code).value_counts(dropna=False).head(30).to_string())
 
 
-def validate_output(output: Path) -> None:
+def validate_output(output: Path, omit_time_utc: bool = False) -> None:
     if not output.exists():
         raise FileNotFoundError(f"output parquet not found: {output}")
 
+    expected_columns = COMPACT_OUTPUT_COLUMNS if omit_time_utc else OUTPUT_COLUMNS
     table = pq.read_table(output)
-    missing = [col for col in OUTPUT_COLUMNS if col not in table.column_names]
+    missing = [col for col in expected_columns if col not in table.column_names]
     if missing:
         raise AssertionError(f"output missing columns: {missing}")
 
     df = table.to_pandas()
     if not df.empty:
-        duplicated = df.duplicated(["station_id", "time_utc"]).sum()
-        if duplicated:
-            raise AssertionError(f"duplicate station/hour rows: {duplicated}")
+        if "time_utc" in df.columns:
+            duplicated = df.duplicated(["station_id", "time_utc"]).sum()
+            if duplicated:
+                raise AssertionError(f"duplicate station/hour rows: {duplicated}")
+            if str(df["time_utc"].dt.tz) != "UTC":
+                raise AssertionError("time_utc is not UTC")
         if (df["precip_mm"] < 0).any():
             raise AssertionError("negative precipitation values found")
-        if str(df["time_utc"].dt.tz) != "UTC":
-            raise AssertionError("time_utc is not UTC")
+        if str(df["report_time_utc"].dt.tz) != "UTC":
+            raise AssertionError("report_time_utc is not UTC")
     log.info("Output validation passed: rows=%s columns=%s", len(df), len(df.columns))
 
 
@@ -694,6 +754,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--process-only", action="store_true")
     parser.add_argument("--dry-run-manifest", action="store_true")
     parser.add_argument("--validate-output", action="store_true")
+    parser.add_argument(
+        "--omit-time-utc",
+        action="store_true",
+        help="omit the hourly time_utc column from final output; station-hour dedupe still uses it internally",
+    )
+    parser.add_argument(
+        "--sort-output-by-report-time",
+        action="store_true",
+        help="sort buffered output batches by report_time_utc/station_id before writing for better timestamp compression",
+    )
+    parser.add_argument(
+        "--write-batch-rows",
+        type=int,
+        default=1_000_000,
+        help="target accepted rows per output write batch",
+    )
+    parser.add_argument(
+        "--compression",
+        default="snappy",
+        choices=["snappy", "zstd", "gzip", "brotli", "none"],
+        help="Parquet compression codec",
+    )
     parser.add_argument("--inspect-sample", action="store_true")
     parser.add_argument("--inspect-station", default=DEFAULT_SAMPLE_STATION)
     parser.add_argument("--inspect-year", type=int, default=DEFAULT_SAMPLE_YEAR)
@@ -702,6 +784,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.write_batch_rows < 1:
+        raise ValueError("--write-batch-rows must be >= 1")
+    compression = None if args.compression == "none" else args.compression
     manifest_dir = ensure_manifest_dir(args.output, args.manifest_dir)
 
     if args.inspect_sample:
@@ -740,11 +825,15 @@ def main() -> int:
             args.raw_dir,
             args.output,
             manifest_dir,
+            args.omit_time_utc,
+            args.sort_output_by_report_time,
+            args.write_batch_rows,
+            compression,
         )
         log.info("Processing complete: rows=%s output=%s", rows, args.output)
         log.info("Reject counts written: %s", manifest_dir / "reject_counts.csv")
         if args.validate_output:
-            validate_output(args.output)
+            validate_output(args.output, args.omit_time_utc)
 
     return 0
 

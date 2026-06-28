@@ -88,6 +88,23 @@ Run the full local pipeline:
 python src/pipelinev1.py --max-workers 16
 ```
 
+Run a smaller minute-oriented output when downstream code mainly uses the
+retained report minute (`report_time_utc`, equivalent to the old `time(min)`):
+
+```bash
+python src/pipelinev1.py \
+  --max-workers 16 \
+  --omit-time-utc \
+  --sort-output-by-report-time \
+  --compression zstd \
+  --write-batch-rows 1000000 \
+  --output data/final/ghcnh_conus_precip_2020_2022_compact.parquet
+```
+
+This still uses `time_utc` internally for station-hour deduplication, but omits
+it from the final Parquet. Sorting each output batch by `report_time_utc` groups
+many stations at the same retained minute and improves timestamp compression.
+
 Run only the downloader:
 
 ```bash
@@ -157,12 +174,28 @@ the full job.
 10. Convert report times to UTC and compute `time_utc = floor(report_time, hour)`.
 11. For each `station_id + time_utc`, keep the last report in that hour. This
     follows the GHCNh documentation for METAR/SPECI precipitation running totals.
-12. Stream accepted rows into one Snappy-compressed Parquet file.
+12. Stream accepted rows into one compressed Parquet file.
 13. Write audit manifests:
     - `station_year_manifest.csv`
     - `download_manifest.csv`
     - `processing_manifest.csv`
     - `reject_counts.csv`
+
+## Compact Output Notes
+
+If downstream code uses the retained report minute rather than the hourly floor,
+`--omit-time-utc` is usually preferable. In the local smoke test, the compact
+configuration reduced `sample_5.parquet` from about `668 KiB` to `118 KiB` while
+preserving row count and QC behavior.
+
+The compact mode is smaller because:
+
+- it drops the redundant `time_utc` output column;
+- it sorts write batches by `report_time_utc, station_id`;
+- it uses ZSTD compression when `--compression zstd` is supplied;
+- it writes larger batches, reducing row-group overhead.
+
+Use `report_time_utc.dt.floor("h")` later if an hourly key is needed again.
 
 ## Improvements Over `pipelinev0.py`
 
@@ -191,6 +224,9 @@ Local checks run with `source ~/.venvs/py313/bin/activate`:
   2020-2022.
 - `--sample 5 --validate-output` produced `38,586` rows with no duplicate
   `(station_id, time_utc)` pairs.
+- Compact sample output with `--omit-time-utc --sort-output-by-report-time
+  --compression zstd` produced the same `38,586` rows with 10 columns and a much
+  smaller Parquet file.
 - A METAR/SPECI sample station (`USW00094728`, 2020) converted `491` trace
   precipitation rows to zero and rejected bad QC codes.
 
@@ -202,4 +238,3 @@ Local checks run with `source ~/.venvs/py313/bin/activate`:
   used during development, not the production pipeline.
 - The default years are `2020 2021 2022`, but the CLI supports other years when
   present in the inventory.
-
