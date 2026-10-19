@@ -1,0 +1,2 @@
+gt150_rows,stations,source343_q5_fm15_rows,isolated_pm3h_lt1_rows,no_100km_neighbor_ge10_same_hour_rows,no_100km_neighbor_ge25_same_hour_rows,ge250_rows,ge500_rows,very_likely_bad_rows,suspicious_rows,needs_manual_check_rows
+309,41,290,45,296,306,228,147,148,84,77

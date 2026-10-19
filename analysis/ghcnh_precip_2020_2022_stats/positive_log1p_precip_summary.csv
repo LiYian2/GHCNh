@@ -1,0 +1,2 @@
+positive_rows,precip_min_mm,precip_q0_1pct_mm,precip_q1pct_mm,precip_median_mm,precip_q99pct_mm,precip_q99_9pct_mm,precip_max_mm,log1p_min,log1p_q0_1pct,log1p_q1pct,log1p_q5pct,log1p_q25pct,log1p_q50pct,log1p_q75pct,log1p_q90pct,log1p_q95pct,log1p_q99pct,log1p_q99_9pct,log1p_max,log1p_mean
+4849060,0.2,0.2,0.2,0.5,15.0,35.6,990.6,0.18232156,0.18232156,0.18232156,0.26236427,0.26236427,0.4054651,0.91629076,1.5260563,1.9169227,2.7725887,3.6000483,6.8993196,0.69988036

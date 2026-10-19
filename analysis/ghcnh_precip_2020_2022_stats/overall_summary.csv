@@ -1,0 +1,2 @@
+rows,stations,start_utc,end_utc,lat_min,lat_max,lon_min,lon_max,elevation_min_m,elevation_max_m,precip_nulls,zero_precip_rows,positive_precip_rows
+60008899,3687,2020-01-01 00:00:00+00:00,2022-12-31 23:59:00+00:00,24.5569,49.3183,-124.5575,-67.7742,-999.9,4113.3,0,55159839,4849060

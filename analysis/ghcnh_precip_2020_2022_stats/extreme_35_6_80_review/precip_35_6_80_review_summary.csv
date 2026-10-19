@@ -1,0 +1,2 @@
+rows_35_6_80,stations,source343_q5_fm15_rows,isolated_pm3h_lt1_rows,has_pm3h_ge10_rows,has_pm3h_ge25_rows,has_100km_neighbor_ge10_same_hour_rows,has_100km_neighbor_ge25_same_hour_rows,has_50km_neighbor_ge10_same_hour_rows,supported_rows,weakly_supported_rows,unsupported_rows,suspicious_rows
+4345,1680,2056,498,2177,968,2517,1230,1676,1571,1730,947,97

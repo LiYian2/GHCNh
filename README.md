@@ -1,8 +1,8 @@
-# GHCNh CONUS Hourly Precipitation Pipeline
+# GHCNh CONUS Hourly Weather Pipeline
 
-This repo builds a quality-controlled hourly precipitation dataset for the
-contiguous United States from NOAA's Global Historical Climatology Network
-hourly product (GHCNh).
+This repo builds compact, quality-controlled hourly weather and precipitation
+datasets for the contiguous United States from NOAA's Global Historical
+Climatology Network hourly product (GHCNh).
 
 The main implementation is [`src/pipelinev1.py`](src/pipelinev1.py). The
 earlier prototype is kept as [`src/pipelinev0.py`](src/pipelinev0.py) for
@@ -32,6 +32,110 @@ Final Parquet schema:
 | `report_type` | original report type, such as FM15/FM16 |
 
 The script also writes audit manifests under `data/final/manifests/`.
+
+## General Weather Dataset
+
+For weather-agent and other multi-variable use cases, use
+[`src/weather_pipeline.py`](src/weather_pipeline.py). It produces one compact
+row per station-hour and keeps the last quality-controlled, non-null value of
+each variable reported during that hour. This avoids dropping temperature,
+wind, or pressure observations when the same report has no precipitation.
+
+The compact weather output contains 58 columns covering:
+
+- air, dew-point, and wet-bulb temperatures;
+- relative humidity;
+- station, sea-level, and altimeter pressure plus 3-hour pressure tendency;
+- wind direction, speed, gust, calm, and variable-wind flags;
+- visibility;
+- 1-, 3-, 6-, and 24-hour precipitation plus trace flags;
+- snow depth;
+- ceiling, sky condition, and up to four cloud layers;
+- manual and automated present-weather codes;
+- compact source/QC provenance for core variables.
+
+Numeric output names include their units (`_c`, `_pct`, `_hpa`, `_mps`,
+`_km`, `_mm`, or `_m`). The output uses UTC report timestamps, `float32`
+numeric values, dictionary-friendly strings, and ZSTD compression by default.
+
+Run a representative station sample:
+
+```bash
+python src/weather_pipeline.py \
+  --years 2020 \
+  --station-ids USW00094728 \
+  --validate-output \
+  --output data/final/weather_airport_sample.parquet \
+  --manifest-dir data/final/weather_airport_sample_manifests
+```
+
+Build one compact yearly file:
+
+```bash
+python src/weather_pipeline.py \
+  --years 2010 \
+  --max-workers 16 \
+  --compression zstd \
+  --output data/final/weather_by_year/ghcnh_conus_weather_2010_compact.parquet \
+  --manifest-dir data/final/weather_by_year/manifests/2010
+```
+
+For 2010-2025, yearly outputs are recommended instead of one monolithic file:
+they keep Colab temporary storage bounded and make retries and downstream
+partition pruning straightforward.
+
+Large yearly jobs can also be split deterministically across independent Colab
+sessions. 180 shards per year keep each restart unit small enough for
+short-lived or unstable Colab sessions; run the same year with shard indexes
+0 through 179:
+
+```bash
+python src/weather_pipeline.py \
+  --years 2010 \
+  --num-shards 180 \
+  --shard-index 0 \
+  --process-workers 4 \
+  --output data/final/weather_by_year/year=2010/part-000.parquet \
+  --manifest-dir data/final/weather_by_year/manifests/2010/shard-000
+```
+
+The modulo-based split is stable because the station-year manifest is sorted
+by year and station ID. All 180 shard manifests together cover the same rows
+as an unsharded run. The reader first loads only the primary measurement
+columns, then fetches QC/provenance companions only for variables actually
+present in a station-year file; this keeps precipitation-only cooperative
+stations fast and memory-efficient without narrowing the output schema.
+
+Run or resume the complete 2010-2025 build through the Colab CLI:
+
+```bash
+source ~/.venvs/py313/bin/activate
+python scripts/run_colab_weather.py --years 2010-2025 --num-shards 180
+```
+
+To keep completed shards in Google Drive (recommended for free Colab sessions),
+mount Drive once and point the runner at it:
+
+```bash
+colab drivemount -s ghcnh-weather-batch /content/drive
+python scripts/run_colab_weather.py \
+  --session ghcnh-weather-batch \
+  --years 2010-2025 \
+  --num-shards 180 \
+  --drive-root /content/drive/MyDrive/GHCNh
+```
+
+If earlier shards already exist locally, `--start-at 2011:45` starts at that
+year/shard and then processes every shard of later years.
+
+Drive mode validates and skips completed 58-column Parquet shards, so rerunning the
+same command is safe after a free-runtime disconnect. A GPU is not required.
+
+The driver validates existing Parquet parts and skips them, downloads each new
+part before advancing, recreates an expired Colab session on retry, and stops
+the session in a `finally` block so compute does not remain billable after the
+batch exits. It requests a CPU runtime by default because this pipeline does
+not use CUDA; pass `--gpu T4` only for separate GPU-enabled processing code.
 
 ## Data Sources
 

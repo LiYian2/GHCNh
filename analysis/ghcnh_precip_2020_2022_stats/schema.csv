@@ -1,0 +1,11 @@
+column,dtype
+station_id,String
+report_time_utc,"Datetime(time_unit='us', time_zone='UTC')"
+lat,Float32
+lon,Float32
+elevation_m,Float32
+precip_mm,Float32
+measurement_code,String
+quality_code,String
+source_code,String
+report_type,String

@@ -1,0 +1,6 @@
+source_code,quality_code,report_type,rows,stations,min_mm,median_mm,max_mm,isolated_rows,has_100km_ge10,supported,suspicious
+343,5,FM15,2056,767,35.8,42.2,79.5,166,1179,761,97
+382,,H-derived-HPD-C-high-res,1902,756,35.8,42.7,79.0,288,1130,678,0
+223,1,FM15,311,172,35.8,42.6,77.9,30,178,114,0
+222,1,SHEF,60,15,35.8,43.2,77.5,12,24,15,0
+223,1,FM16,16,15,35.8,44.550003,66.2,2,6,3,0
